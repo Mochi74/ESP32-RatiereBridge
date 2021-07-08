@@ -14,8 +14,8 @@ bool debug = true;
 // For AP mode:
 //const char *ssid = "LK8000";  // You will connect your phone to this Access Point
 //const char *pw = "Flightcomputer"; // and this is the password
-const char *ssid = "MochiHome";  // You will connect your phone to this Access Point
-const char *pw = "Fannynette"; // and this is the password
+const char *ssid = "Linksys12063";  // You will connect your phone to this Access Point
+const char *pw = "Lugulu74"; // and this is the password
 //IPAddress ip(192, 168, 4, 1); // From RoboRemo app, connect to this IP
 IPAddress netmask(255, 255, 255, 0);
 

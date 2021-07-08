@@ -250,7 +250,7 @@ static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char
   {
     unsigned int cpy;
     const char get_report_cmd[] = "\007RECREP\r";
-    unsigned int data_sz;
+     int data_sz;
     char *ptr;
 
  

@@ -21,19 +21,19 @@
 #define SERIAL2_TXPIN   4
 
 bool debug = true;
-bool bouchon = true;
+bool bouchon = false;
 
 #define VERSION "2.00"
 
 
-//const char *ssid = "Linksys12063";    // You will connect your phone to this Access Point
-//const char *pw = "Lugulu74";          // and this is the password
-const char *ssid = "MochiHome";    // You will connect your phone to this Access Point
-const char *pw = "Fannynette";          // and this is the password
+const char *ssid = "Linksys12063";    // You will connect your phone to this Access Point
+const char *pw = "Lugulu74";          // and this is the password
+//const char *ssid = "MochiHome";    // You will connect your phone to this Access Point
+//const char *pw = "Fannynette";          // and this is the password
 
 // define gateway IP address  
-//#define GATEWAY_SERVER "192.168.0.113"
-#define GATEWAY_SERVER "192.168.1.35"
+#define GATEWAY_SERVER "192.168.0.113"
+//#define GATEWAY_SERVER "192.168.1.35"
 #define GATEWAY_PORT "1880"
 #define PATH "/gateway/in/"
 
@@ -41,8 +41,10 @@ IPAddress netmask(255, 255, 255, 0);
 
 #define RATIEREID "Ratiere1"
 #define MSGID_GENERAL  "Statut"
-#define MSGID_SPEEDTABLE  "Statut"
+#define MSGID_SPEEDTABLE "SpeedTable"
+#define MSGID_TEMPTABLE  "TempTable"
+#define MSGID_LAMETABLE  "LameTable"
 
-
+#define NB_RETRY 5
 #define BUFFER_SIZE 1024
 //////////////////////////////////////////////////////////////////////////

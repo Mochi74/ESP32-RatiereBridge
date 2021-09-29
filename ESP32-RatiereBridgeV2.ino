@@ -14,6 +14,7 @@
 #include <ArduinoJson.h>
 
 
+String ratiere_id = "Unknown"; 
 
 
 
@@ -270,19 +271,17 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
     if (debug) COM[DEBUG_COM]->printf ("send report to url %s\n",url);
 
     if (WiFi.status()!= WL_CONNECTED){
-      Serial.println("Error in WiFi connection");
+      COM[DEBUG_COM]->printf("Error in WiFi connection");
       return;
       } 
     
     HTTPClient http;   
-    http.begin(url);
-    http.addHeader("Content-Type", "text/plain"); 
-
+  
       
     //const int capacity1 = JSON_OBJECT_SIZE(12);
   
     DynamicJsonDocument  message(1024);
-    message["ApparelId"] =  RATIEREID;
+    message["ApparelId"] =  ratiere_id;
     message["MsgId"] =      MSGID_GENERAL;
   
     JsonObject payload = message.createNestedObject("Payload");
@@ -298,21 +297,21 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
 
     serializeJson(message,putData);
     
-    if (debug) COM[DEBUG_COM]->printf ("Put Status:\n%s\n",putData);
-      
+    if (debug) COM[DEBUG_COM]->printf ("Put Status:\n");
+
+    http.begin(url);
+    http.addHeader("Content-Type", "text/plain"); 
+  
     int httpResponseCode = http.PUT(putData);
     if(httpResponseCode!=200){
-        Serial.print("Error on sending PUT Request: ");
-        Serial.println(httpResponseCode);
-        }
+        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+        COM[DEBUG_COM]->printf("%d",httpResponseCode);        }
  
     http.end();
     
-    http.begin(url);
-    http.addHeader("Content-Type", "text/plain"); 
-
+    
     DynamicJsonDocument  message2(1024);  
-    message2["ApparelId"] =  RATIEREID;
+    message2["ApparelId"] =  ratiere_id;
     message2["MsgId"] =      MSGID_SPEEDTABLE;
     JsonObject payload2 = message2.createNestedObject("Payload");
      
@@ -323,51 +322,142 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
       
     serializeJson(message2,putData);  
     
-    if (debug) COM[DEBUG_COM]->printf ("Put SpeedTable:\n%s\n",putData);
+    if (debug) COM[DEBUG_COM]->printf ("Put SpeedTable:\n");
     
+    http.begin(url);
+    http.addHeader("Content-Type", "text/plain"); 
+
     httpResponseCode = http.PUT(putData);
+    
     if(httpResponseCode!=200){
-        Serial.print("Error on sending PUT Request: ");
-        Serial.println(httpResponseCode);
-        }
+        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+        COM[DEBUG_COM]->printf("%d",httpResponseCode);        }
  
     http.end();
-    /*
-    const int capacity3 = JSON_OBJECT_SIZE(29);
-    StaticJsonDocument<capacity3> jDoc3;
-    JsonArray temp_data = jDoc3.createNestedArray("TempTable");
+
+    DynamicJsonDocument  message3(1024);  
+    message3["ApparelId"] =  ratiere_id;
+    message3["MsgId"] =      MSGID_TEMPTABLE;
+    JsonObject payload3 = message3.createNestedObject("Payload");
+     
+    JsonArray temp_data = payload3.createNestedArray("TempTable");
     for (i=0; i<50; i++) {
       temp_data.add(rep->temp_table[i]);
-      }    
-    serializeJson(jDoc3,putData);
-    if (debug) COM[DEBUG_COM]->printf ("making TempTable PUT request\n");
-    client.put("/ratiere/in", contentType, putData);
+      }
+      
+    serializeJson(message3,putData);  
+    
+    if (debug) COM[DEBUG_COM]->printf ("Put TempTable:\n");
+    
+    httpResponseCode = http.PUT(putData);
+    
+    if(httpResponseCode!=200){
+        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+        COM[DEBUG_COM]->printf("%d",httpResponseCode);        }
  
+    http.end();
+
+
+    DynamicJsonDocument  message4(1024);  
+    message4["ApparelId"] =  ratiere_id;
+    message4["MsgId"] =      MSGID_LAMETABLE;
+    JsonObject payload4 = message4.createNestedObject("Payload");
     
-    const int capacity4 = JSON_OBJECT_SIZE(28);
-    StaticJsonDocument<capacity4> jDoc4;
-    
-    JsonArray lame = jDoc4.createNestedArray("Lame"); 
+    JsonArray lame = payload4.createNestedArray("Lame"); 
 
     unsigned long long total = 0;
     
     for (i=0; i<28; i++) {
       total=0;
-      // JsonArray cycle = lame.createNestedArray("Cycles");
       for (j=0; j<50; j++) {  
         total += rep->cycles[i][j];
-      //    cycle.add(rep->cycles[i][j]);
         }
       lame.add(total);  
     }
     
-    serializeJson(jDoc4,putData);
-    if (debug) COM[DEBUG_COM]->printf ("making TempTable PUT request\n");
-    client.put("/ratiere/in", contentType, putData);
-  */
+    serializeJson(message4,putData);
+    
+    if (debug) COM[DEBUG_COM]->printf ("Put Lame\n",putData);
+    
+    httpResponseCode = http.PUT(putData);
+    
+    if(httpResponseCode!=200){
+        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+        COM[DEBUG_COM]->printf("%d",httpResponseCode);
+        }
+ 
+    http.end();  
 }
 
 
+void get_config() { 
+    
+    if (WiFi.status()!= WL_CONNECTED){
+      COM[DEBUG_COM]->printf("Error in WiFi connection");
+      return;
+      } 
+        
+    char url[200] = ("http://");
+    strcat(url,GATEWAY_SERVER);
+    strcat(url,":");
+    strcat(url,GATEWAY_PORT);
+    strcat(url,"/config?value=");
+    String ip = WiFi.localIP().toString();
+    strcat(url,ip.c_str());
+
+    HTTPClient http;   
+    http.addHeader("Content-Type", "text/plain"); 
+    if (debug) COM[DEBUG_COM]->printf ("get config from url %s\n",url);
+   
+    http.begin(url);
+    
+    int httpResponseCode = http.GET();
+    if (httpResponseCode>0) {
+        if (debug) COM[DEBUG_COM]->printf ("HTTP Response code:%i\n",httpResponseCode);
+        String payload = http.getString();
+        String quotes = "&quot;";
+        payload.replace(quotes,"\"");
+        if (debug) COM[DEBUG_COM]->printf(payload.c_str());
+    
+        setconfig(payload);    
+    }
+    else {
+        if (debug) COM[DEBUG_COM]->printf("Error code:%i\n",httpResponseCode);
+    }    
+    // Free resources
+    http.end();
+    return;
+    
+}
+
+
+void setconfig(String json){
+   
+  StaticJsonDocument<100> configDoc;
+  DeserializationError err = deserializeJson(configDoc,json.c_str() );
+
+  if (err) {
+    COM[DEBUG_COM]->printf("deserializeJson() failed with code :%s",err.f_str());
+  }
+
+  JsonObject configObject = configDoc.as<JsonObject>();
+  JsonVariant apparelId = configObject.getMember("ApparelID");
+  
+  if (apparelId.isNull()) {
+    COM[DEBUG_COM]->printf("ApparelId not found in config\n");
+    return;
+  }
+  
+  /*JsonVariant periodeStatut = configObject.getMember("PeriodeStatut");
+  JsonVariant periodeTempTable = configObject.getMember("PeriodeTempTable");
+  JsonVariant periodeSpeedTable = configObject.getMember("PeriodeSpeedTable");
+  JsonVariant periodeLameTable = configObject.getMember("PeriodeLameTable");  
+  */
+  if (debug) COM[DEBUG_COM]->printf("ApparelID:%s\n",apparelId.as<const char *>());
+  ratiere_id = apparelId.as<String>();
+ 
+  return;
+}
 
 // Main
 void loop() 
@@ -375,23 +465,29 @@ void loop()
   unsigned short speed_;
   unsigned char temp, nb_frames;
   int ret=-1;
+  unsigned int retry;
    
   if (debug) COM[DEBUG_COM]->print("\n******** New loop ********\n");
 
- 
-  
+  get_config();
 
   // get report from connected ratiere on COM1 //     
-  ret = get_report(&speed_, &temp, &nb_frames, &report);
-  if (bouchon) ret = 0;
+  retry=0;
+  do {
+     ret = get_report(&speed_, &temp, &nb_frames, &report);
+     if (bouchon) ret = 0;
+     retry++;
+  } while ((ret!=0) && (retry<NB_RETRY)); 
  
   if (ret==0) {
     send_report(speed_,temp,nb_frames,&report);
-    delay(3000); 
     }
     
   // Send report to server //       
   else {
     if (debug)COM[DEBUG_COM]->print ("get_report failed\n");
-    }     
+    }
+
+  delay(3000); 
+
 }

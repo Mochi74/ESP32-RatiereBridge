@@ -15,8 +15,7 @@
 
 
 String ratiere_id = "Unknown"; 
-
-
+int statutPeriod,tempTablePeriod,speedTablePeriod,lameTablePeriod;
 
 struct report_data_t {
     uint8_t version_;            /* version de la structure */
@@ -170,6 +169,7 @@ static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char
      int data_sz;
     char *ptr;
 
+   if (debug) COM[DEBUG_COM]->printf ("\n***get_report\n");
  
 
     COM[RATIERE_COM]->begin(4800,SERIAL_8N2);
@@ -257,6 +257,13 @@ static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char
 * send_report: send full report from a Ratiere to HTTP 
 *--------------------------------------------------------------------------=
 */
+
+unsigned long lastsent_statut=0;
+unsigned long lastsent_tempTable=0;
+unsigned long lastsent_speedTable=0;
+unsigned long lastsent_lameTable=0;
+ 
+ 
 void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_frames, report_data_t *rep){
 
     unsigned int i,j; 
@@ -268,125 +275,147 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
     strcat(url,GATEWAY_PORT);
     strcat(url,PATH);
 
-    if (debug) COM[DEBUG_COM]->printf ("send report to url %s\n",url);
+    if (debug) COM[DEBUG_COM]->printf ("*** send report to url %s\n",url);
 
     if (WiFi.status()!= WL_CONNECTED){
-      COM[DEBUG_COM]->printf("Error in WiFi connection");
+      COM[DEBUG_COM]->printf("Error in WiFi connection\n");
       return;
       } 
     
     HTTPClient http;   
-  
+    unsigned long current_time = millis();
+    
+    if (((current_time-lastsent_statut)/1000) > statutPeriod || (lastsent_statut > current_time)) {    
+
+        
+        DynamicJsonDocument  message(1024);
+        message["ApparelId"] =  ratiere_id;
+        message["MsgId"] =      MSGID_GENERAL;
       
-    //const int capacity1 = JSON_OBJECT_SIZE(12);
-  
-    DynamicJsonDocument  message(1024);
-    message["ApparelId"] =  ratiere_id;
-    message["MsgId"] =      MSGID_GENERAL;
-  
-    JsonObject payload = message.createNestedObject("Payload");
-  
-    payload["Version"]= rep->version_;
-    payload["Temperature"]= temp;
-    payload["TemperatureMax"]= rep->max_temp;
-    payload["Speed"]= speed_;
-    payload["SpeedMax"]= rep->max_speed;
-    payload["Frame"]= nb_frames;
-    payload["idle"]= rep->time_idle;
-    payload["TotalCycle"]= rep->picks_counter;
-
-    serializeJson(message,putData);
-    
-    if (debug) COM[DEBUG_COM]->printf ("Put Status:\n");
-
-    http.begin(url);
-    http.addHeader("Content-Type", "text/plain"); 
-  
-    int httpResponseCode = http.PUT(putData);
-    if(httpResponseCode!=200){
-        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
-        COM[DEBUG_COM]->printf("%d",httpResponseCode);        }
- 
-    http.end();
-    
-    
-    DynamicJsonDocument  message2(1024);  
-    message2["ApparelId"] =  ratiere_id;
-    message2["MsgId"] =      MSGID_SPEEDTABLE;
-    JsonObject payload2 = message2.createNestedObject("Payload");
-     
-    JsonArray speed_time = payload2.createNestedArray("SpeedTable");
-    for (i=0; i<50; i++) {
-      speed_time.add(rep->time_running[i]);
-      }
+        JsonObject payload = message.createNestedObject("Payload");
       
-    serializeJson(message2,putData);  
+        payload["Version"]= rep->version_;
+        payload["Temperature"]= temp;
+        payload["TemperatureMax"]= rep->max_temp;
+        payload["Speed"]= speed_;
+        payload["SpeedMax"]= rep->max_speed;
+        payload["Frame"]= nb_frames;
+        payload["idle"]= rep->time_idle;
+        payload["TotalCycle"]= rep->picks_counter;
     
-    if (debug) COM[DEBUG_COM]->printf ("Put SpeedTable:\n");
+        serializeJson(message,putData);
+        
+        if (debug) COM[DEBUG_COM]->printf ("Put Status:\n");
     
-    http.begin(url);
-    http.addHeader("Content-Type", "text/plain"); 
-
-    httpResponseCode = http.PUT(putData);
-    
-    if(httpResponseCode!=200){
-        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
-        COM[DEBUG_COM]->printf("%d",httpResponseCode);        }
- 
-    http.end();
-
-    DynamicJsonDocument  message3(1024);  
-    message3["ApparelId"] =  ratiere_id;
-    message3["MsgId"] =      MSGID_TEMPTABLE;
-    JsonObject payload3 = message3.createNestedObject("Payload");
-     
-    JsonArray temp_data = payload3.createNestedArray("TempTable");
-    for (i=0; i<50; i++) {
-      temp_data.add(rep->temp_table[i]);
-      }
+        http.begin(url);
+        http.addHeader("Content-Type", "text/plain"); 
       
-    serializeJson(message3,putData);  
-    
-    if (debug) COM[DEBUG_COM]->printf ("Put TempTable:\n");
-    
-    httpResponseCode = http.PUT(putData);
-    
-    if(httpResponseCode!=200){
-        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
-        COM[DEBUG_COM]->printf("%d",httpResponseCode);        }
- 
-    http.end();
-
-
-    DynamicJsonDocument  message4(1024);  
-    message4["ApparelId"] =  ratiere_id;
-    message4["MsgId"] =      MSGID_LAMETABLE;
-    JsonObject payload4 = message4.createNestedObject("Payload");
-    
-    JsonArray lame = payload4.createNestedArray("Lame"); 
-
-    unsigned long long total = 0;
-    
-    for (i=0; i<28; i++) {
-      total=0;
-      for (j=0; j<50; j++) {  
-        total += rep->cycles[i][j];
+        int httpResponseCode = http.PUT(putData);
+        if(httpResponseCode!=200){
+            COM[DEBUG_COM]->printf("Error n°:%d on PUT Request:\n%s\n",httpResponseCode,putData);
         }
-      lame.add(total);  
+        else {
+            lastsent_statut = current_time;  
+        }
+        http.end();
+            
     }
     
-    serializeJson(message4,putData);
+    if (((current_time-lastsent_speedTable)/1000) > speedTablePeriod || (lastsent_speedTable > current_time)) {    
+
+        DynamicJsonDocument  message2(1024);  
+        message2["ApparelId"] =  ratiere_id;
+        message2["MsgId"] =      MSGID_SPEEDTABLE;
+        JsonObject payload2 = message2.createNestedObject("Payload");
+         
+        JsonArray speed_time = payload2.createNestedArray("SpeedTable");
+        for (i=0; i<50; i++) {
+          speed_time.add(rep->time_running[i]);
+          }
+          
+        serializeJson(message2,putData);  
+        
+        if (debug) COM[DEBUG_COM]->printf ("Put SpeedTable:\n");
+        
+        http.begin(url);
+        http.addHeader("Content-Type", "text/plain"); 
     
-    if (debug) COM[DEBUG_COM]->printf ("Put Lame\n",putData);
-    
-    httpResponseCode = http.PUT(putData);
-    
-    if(httpResponseCode!=200){
-        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
-        COM[DEBUG_COM]->printf("%d",httpResponseCode);
+        int httpResponseCode = http.PUT(putData);
+        
+        if(httpResponseCode!=200){
+            COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+            COM[DEBUG_COM]->printf("%d",httpResponseCode);        
         }
- 
-    http.end();  
+        else {
+            lastsent_speedTable = current_time;  
+        }
+        
+        http.end();
+    }   
+
+    if (((current_time-lastsent_tempTable)/1000) > tempTablePeriod || (lastsent_tempTable > current_time)) {    
+
+        DynamicJsonDocument  message3(1024);  
+        message3["ApparelId"] =  ratiere_id;
+        message3["MsgId"] =      MSGID_TEMPTABLE;
+        JsonObject payload3 = message3.createNestedObject("Payload");
+         
+        JsonArray temp_data = payload3.createNestedArray("TempTable");
+        for (i=0; i<50; i++) {
+          temp_data.add(rep->temp_table[i]);
+        }
+          
+        serializeJson(message3,putData);  
+        
+        if (debug) COM[DEBUG_COM]->printf ("Put TempTable:\n");
+        
+        int httpResponseCode = http.PUT(putData);
+        
+        if(httpResponseCode!=200){
+            COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+            COM[DEBUG_COM]->printf("%d",httpResponseCode);        
+        }
+        else {
+            lastsent_tempTable = current_time;  
+        }
+       
+        http.end();
+    }
+
+    if (((current_time-lastsent_lameTable)/1000) > lameTablePeriod || (lastsent_lameTable > current_time)) {    
+
+        DynamicJsonDocument  message4(1024);  
+        message4["ApparelId"] =  ratiere_id;
+        message4["MsgId"] =      MSGID_LAMETABLE;
+        JsonObject payload4 = message4.createNestedObject("Payload");
+        
+        JsonArray lame = payload4.createNestedArray("Lame"); 
+    
+        unsigned long long total = 0;
+        
+        for (i=0; i<28; i++) {
+          total=0;
+          for (j=0; j<50; j++) {  
+            total += rep->cycles[i][j];
+            }
+          lame.add(total);  
+        }
+        
+        serializeJson(message4,putData);
+        
+        if (debug) COM[DEBUG_COM]->printf ("Put Lame\n",putData);
+        
+        int httpResponseCode = http.PUT(putData);
+        
+        if(httpResponseCode!=200){
+            COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+            COM[DEBUG_COM]->printf("%d",httpResponseCode);
+            }
+        else {
+            lastsent_lameTable = current_time;  
+        }
+        http.end();  
+    }
 }
 
 
@@ -417,9 +446,10 @@ void get_config() {
         String payload = http.getString();
         String quotes = "&quot;";
         payload.replace(quotes,"\"");
-        if (debug) COM[DEBUG_COM]->printf(payload.c_str());
+        if (debug) COM[DEBUG_COM]->printf("%s\n",payload.c_str());
     
         setconfig(payload);    
+        
     }
     else {
         if (debug) COM[DEBUG_COM]->printf("Error code:%i\n",httpResponseCode);
@@ -433,29 +463,57 @@ void get_config() {
 
 void setconfig(String json){
    
-  StaticJsonDocument<100> configDoc;
-  DeserializationError err = deserializeJson(configDoc,json.c_str() );
+  StaticJsonDocument<200> configDoc;
+  DeserializationError err = deserializeJson(configDoc,json.c_str());
 
   if (err) {
-    COM[DEBUG_COM]->printf("deserializeJson() failed with code :%s",err.f_str());
+    COM[DEBUG_COM]->printf("deserializeJson() failed with code :%s\n",err.f_str());
   }
 
   JsonObject configObject = configDoc.as<JsonObject>();
-  JsonVariant apparelId = configObject.getMember("ApparelID");
   
-  if (apparelId.isNull()) {
+  JsonVariant variant = configObject.getMember("ApparelID");
+  if (variant.isNull()) {
     COM[DEBUG_COM]->printf("ApparelId not found in config\n");
     return;
+  } else {
+    ratiere_id = variant.as<String>();
+    if (debug) COM[DEBUG_COM]->printf("ratiere_id set to %s\n",ratiere_id);
+  }
+
+  variant = configObject.getMember("PeriodeStatut");
+  if (variant.isNull()) {
+    COM[DEBUG_COM]->printf("PeriodeStatut not found in config\n");
+  } else {
+    statutPeriod = variant.as<int>(); 
+    if (debug) COM[DEBUG_COM]->printf("statutPeriod set to :%d\n",statutPeriod);
   }
   
-  /*JsonVariant periodeStatut = configObject.getMember("PeriodeStatut");
-  JsonVariant periodeTempTable = configObject.getMember("PeriodeTempTable");
-  JsonVariant periodeSpeedTable = configObject.getMember("PeriodeSpeedTable");
-  JsonVariant periodeLameTable = configObject.getMember("PeriodeLameTable");  
-  */
-  if (debug) COM[DEBUG_COM]->printf("ApparelID:%s\n",apparelId.as<const char *>());
-  ratiere_id = apparelId.as<String>();
- 
+  variant = configObject.getMember("PeriodeTempTable");
+  if (variant.isNull()) {
+    COM[DEBUG_COM]->printf("PeriodeTempTable not found in config\n");
+  } else {
+    tempTablePeriod = variant.as<int>(); 
+    if (debug) COM[DEBUG_COM]->printf("tempTablePeriod set to :%d\n",tempTablePeriod);
+  }
+
+  variant = configObject.getMember("PeriodeSpeedTable");
+  if (variant.isNull()) {
+    COM[DEBUG_COM]->printf("PeriodeSpeedTable not found in config\n");
+  } else {
+    speedTablePeriod = variant.as<int>(); 
+    if (debug) COM[DEBUG_COM]->printf("speedTablePeriod set to :%d\n",speedTablePeriod);
+  }
+  
+  variant = configObject.getMember("PeriodeLame");
+  if (variant.isNull()) {
+    COM[DEBUG_COM]->printf("PeriodeSpeedTable not found in config\n");
+  } else {
+    lameTablePeriod = variant.as<int>(); 
+    if (debug) COM[DEBUG_COM]->printf("lamePeriod set to :%d\n",lameTablePeriod);
+  }  
+  
+  
   return;
 }
 

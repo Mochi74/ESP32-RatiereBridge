@@ -230,7 +230,10 @@ static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char
         if ( sz == -1 ) {
             return -1;
         }
-        //if (debug) COM[DEBUG_COM]->printf ("sz = %u\n",sz);
+        if (debug) {
+            if ((sz!=257)&&(sz!=143)) 
+              COM[DEBUG_COM]->printf ("sz = %u\n",sz);
+        }
         
         if (cpy + sz-2 <= sizeof (report_data_t)) {
             memcpy (ptr, &buf[2], sz-2);
@@ -419,6 +422,48 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
 }
 
 
+void check_alert(unsigned short speed_,unsigned char temp){
+
+  char url[200] = ("http://");
+  strcat(url,GATEWAY_SERVER);
+  strcat(url,":");
+  strcat(url,GATEWAY_PORT);
+  strcat(url,PATH);
+
+  if (debug) COM[DEBUG_COM]->printf ("*** send Alert to url %s\n",url);
+
+  if (WiFi.status()!= WL_CONNECTED){
+    COM[DEBUG_COM]->printf("Error in WiFi connection\n");
+    return;
+    } 
+  
+  HTTPClient http;   
+  
+  if (alert) {    
+    DynamicJsonDocument  message(1024);  
+    message["ApparelId"] =  ratiere_id;
+    message["MsgId"] =      MSGID_ALERT;
+    JsonObject payload = message.createNestedObject("Payload");
+    payload["AlertSource"] = "Temperature";
+    //payload["AlertThreshold"] = threshold;      
+    payload["AlertValue"] = temp;      
+          
+    serializeJson(message,putData);
+        
+    if (debug) COM[DEBUG_COM]->printf ("Put Alert\n",putData);
+        
+    int httpResponseCode = http.PUT(putData);
+   
+    if(httpResponseCode!=200){
+        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+        COM[DEBUG_COM]->printf("%d",httpResponseCode);
+    }
+    http.end();  
+  }
+  
+  return;
+}
+
 void get_config() { 
     
     if (WiFi.status()!= WL_CONNECTED){
@@ -517,6 +562,9 @@ void setconfig(String json){
   return;
 }
 
+
+
+
 // Main
 void loop() 
 {  
@@ -538,6 +586,7 @@ void loop()
   } while ((ret!=0) && (retry<NB_RETRY)); 
  
   if (ret==0) {
+    check_alert(temp);
     send_report(speed_,temp,nb_frames,&report);
     }
     

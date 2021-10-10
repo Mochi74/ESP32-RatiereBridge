@@ -14,8 +14,14 @@
 #include <ArduinoJson.h>
 
 
+/* default configuration */
 String ratiere_id = "Unknown"; 
-int statutPeriod,tempTablePeriod,speedTablePeriod,lameTablePeriod;
+int statutPeriod= 60;
+int tempTablePeriod = 60;
+int speedTablePeriod = 60;
+int lameTablePeriod = 300;
+int threshold = 70;
+
 
 struct report_data_t {
     uint8_t version_;            /* version de la structure */
@@ -36,9 +42,6 @@ HardwareSerial Serial_two(2);
 HardwareSerial* COM[NUM_COM] = {&Serial, &Serial_one, &Serial_two};
 
 uint8_t buf[BUFFER_SIZE];
-
-
-
 
 
 
@@ -66,13 +69,10 @@ void setup() {
     }
     if(debug) COM[DEBUG_COM]->println("\nWiFi connected");  
   #endif // MODE_STA
-  
-
+    
   
 //  esp_err_t esp_wifi_set_max_tx_power(50);  //lower WiFi Power
-
  
-  
 }
 
 
@@ -230,9 +230,10 @@ static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char
         if ( sz == -1 ) {
             return -1;
         }
-        if (debug) {
-            if ((sz!=257)&&(sz!=143)) 
-              COM[DEBUG_COM]->printf ("sz = %u\n",sz);
+        
+        if ((sz!=257)&&(sz!=143)) {
+          if (debug)COM[DEBUG_COM]->printf ("sz = %u\n",sz); // cas d'erreur il manque des données.  
+          return -1;    
         }
         
         if (cpy + sz-2 <= sizeof (report_data_t)) {
@@ -272,11 +273,8 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
     unsigned int i,j; 
     char putData[2048];
 
-    char url[200] = ("http://");
-    strcat(url,GATEWAY_SERVER);
-    strcat(url,":");
-    strcat(url,GATEWAY_PORT);
-    strcat(url,PATH);
+    char url[200];
+    sprintf(url,"http://%s:%d%s",GATEWAY_SERVER,GATEWAY_PORT,PATH);
 
     if (debug) COM[DEBUG_COM]->printf ("*** send report to url %s\n",url);
 
@@ -406,7 +404,7 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
         
         serializeJson(message4,putData);
         
-        if (debug) COM[DEBUG_COM]->printf ("Put Lame\n",putData);
+        if (debug) COM[DEBUG_COM]->printf ("Put Lame%s\n",putData);
         
         int httpResponseCode = http.PUT(putData);
         
@@ -424,33 +422,36 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
 
 void check_alert(unsigned short speed_,unsigned char temp){
 
-  char url[200] = ("http://");
-  strcat(url,GATEWAY_SERVER);
-  strcat(url,":");
-  strcat(url,GATEWAY_PORT);
-  strcat(url,PATH);
-
-  if (debug) COM[DEBUG_COM]->printf ("*** send Alert to url %s\n",url);
-
-  if (WiFi.status()!= WL_CONNECTED){
-    COM[DEBUG_COM]->printf("Error in WiFi connection\n");
-    return;
-    } 
-  
   HTTPClient http;   
-  
+  char putData[2048];
+
+  boolean alert = true;
+   
   if (alert) {    
+    char url[200];
+    sprintf(url,"http://%s:%d%s",GATEWAY_SERVER,GATEWAY_PORT,PATH);
+
+    if (debug) COM[DEBUG_COM]->printf ("*** send Alert to url %s\n",url);
+    
+ 
+    if (WiFi.status()!= WL_CONNECTED){
+      COM[DEBUG_COM]->printf("Error in WiFi connection\n");
+      return;
+    } 
+
+    http.begin(url);
+    
     DynamicJsonDocument  message(1024);  
     message["ApparelId"] =  ratiere_id;
-    message["MsgId"] =      MSGID_ALERT;
+    message["MsgId"] =      MSGID_ALERTTEMP;
     JsonObject payload = message.createNestedObject("Payload");
     payload["AlertSource"] = "Temperature";
-    //payload["AlertThreshold"] = threshold;      
+    payload["AlertThreshold"] = threshold;      
     payload["AlertValue"] = temp;      
           
     serializeJson(message,putData);
         
-    if (debug) COM[DEBUG_COM]->printf ("Put Alert\n",putData);
+    if (debug) COM[DEBUG_COM]->printf ("Put Alert%s\n",putData);
         
     int httpResponseCode = http.PUT(putData);
    
@@ -460,7 +461,7 @@ void check_alert(unsigned short speed_,unsigned char temp){
     }
     http.end();  
   }
-  
+   
   return;
 }
 
@@ -471,13 +472,8 @@ void get_config() {
       return;
       } 
         
-    char url[200] = ("http://");
-    strcat(url,GATEWAY_SERVER);
-    strcat(url,":");
-    strcat(url,GATEWAY_PORT);
-    strcat(url,"/config?value=");
-    String ip = WiFi.localIP().toString();
-    strcat(url,ip.c_str());
+    char url[200];
+    sprintf(url,"http://%s:%d/config?value=%s",GATEWAY_SERVER,GATEWAY_PORT,WiFi.localIP().toString().c_str());
 
     HTTPClient http;   
     http.addHeader("Content-Type", "text/plain"); 
@@ -486,23 +482,21 @@ void get_config() {
     http.begin(url);
     
     int httpResponseCode = http.GET();
-    if (httpResponseCode>0) {
+    if (httpResponseCode==200) {
         if (debug) COM[DEBUG_COM]->printf ("HTTP Response code:%i\n",httpResponseCode);
         String payload = http.getString();
         String quotes = "&quot;";
         payload.replace(quotes,"\"");
-        if (debug) COM[DEBUG_COM]->printf("%s\n",payload.c_str());
-    
-        setconfig(payload);    
-        
+        setconfig(payload);     
     }
     else {
         if (debug) COM[DEBUG_COM]->printf("Error code:%i\n",httpResponseCode);
+        String payload = http.getString();
+        if (debug) COM[DEBUG_COM]->printf("%s\n",payload.c_str());
     }    
     // Free resources
     http.end();
-    return;
-    
+    return;    
 }
 
 
@@ -512,7 +506,7 @@ void setconfig(String json){
   DeserializationError err = deserializeJson(configDoc,json.c_str());
 
   if (err) {
-    COM[DEBUG_COM]->printf("deserializeJson() failed with code :%s\n",err.f_str());
+    COM[DEBUG_COM]->printf("deserializeJson() failed with code :%s\n",err.c_str());
   }
 
   JsonObject configObject = configDoc.as<JsonObject>();
@@ -523,7 +517,7 @@ void setconfig(String json){
     return;
   } else {
     ratiere_id = variant.as<String>();
-    if (debug) COM[DEBUG_COM]->printf("ratiere_id set to %s\n",ratiere_id);
+    if (debug) COM[DEBUG_COM]->printf("ratiere_id set to %s\n",ratiere_id.c_str());
   }
 
   variant = configObject.getMember("PeriodeStatut");
@@ -557,6 +551,14 @@ void setconfig(String json){
     lameTablePeriod = variant.as<int>(); 
     if (debug) COM[DEBUG_COM]->printf("lamePeriod set to :%d\n",lameTablePeriod);
   }  
+ 
+ variant = configObject.getMember("Threshold");
+  if (variant.isNull()) {
+    COM[DEBUG_COM]->printf("Threshold not found in config\n");
+  } else {
+    threshold = variant.as<int>(); 
+    if (debug) COM[DEBUG_COM]->printf("threshold set to :%d\n",lameTablePeriod);
+  }  
   
   
   return;
@@ -586,7 +588,7 @@ void loop()
   } while ((ret!=0) && (retry<NB_RETRY)); 
  
   if (ret==0) {
-    check_alert(temp);
+    check_alert(speed_,25);
     send_report(speed_,temp,nb_frames,&report);
     }
     

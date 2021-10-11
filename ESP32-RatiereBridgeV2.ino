@@ -14,13 +14,25 @@
 #include <ArduinoJson.h>
 
 
-/* default configuration */
-String ratiere_id = "Unknown"; 
-int statutPeriod= 60;
-int tempTablePeriod = 60;
-int speedTablePeriod = 60;
-int lameTablePeriod = 300;
-int threshold = 70;
+/* Globals */
+String ratiere_id; 
+int statutPeriod;
+int tempTablePeriod;
+int speedTablePeriod;
+int lameTablePeriod;
+
+unsigned long lastsent_statut;
+unsigned long lastsent_tempTable;
+unsigned long lastsent_speedTable;
+unsigned long lastsent_lameTable;
+ 
+
+/* On going alert*/
+int thresholdTemp;
+int thresholdSpeed;
+boolean alertSpeedOnGoing;
+boolean alertTempOnGoing;
+
 
 
 struct report_data_t {
@@ -72,7 +84,24 @@ void setup() {
     
   
 //  esp_err_t esp_wifi_set_max_tx_power(50);  //lower WiFi Power
+
+// init globals
+  ratiere_id = "Unknown"; 
+  lastsent_statut=0;
+  lastsent_tempTable=0;
+  lastsent_speedTable=0;
+  lastsent_lameTable=0;
  
+  alertSpeedOnGoing = false;
+  alertTempOnGoing = false;
+  
+  statutPeriod= 60;
+  tempTablePeriod = 60;
+  speedTablePeriod = 60;
+  lameTablePeriod = 300;
+  thresholdTemp = 70;
+  thresholdSpeed = 400;
+
 }
 
 
@@ -98,13 +127,13 @@ static int wait_ack (unsigned int delay_)
         }
         else {
             delayMicroseconds(100);
-            if ((millis() - init) >= delay_) {
+            if ( ((millis() - init) >= delay_) || ((int)(millis() - init) <0) ) {
                 break;
             }
         }
     }
 
-    if (debug) COM[DEBUG_COM]->println ("ack timeout\n");
+    //if (debug) COM[DEBUG_COM]->println ("ack timeout\n");
     return -1;
 }
 
@@ -164,91 +193,100 @@ static void display_buf (unsigned char *buf, int sz)
 
 static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char *nb_frames, report_data_t *rep)
   {
-    unsigned int cpy;
-    const char get_report_cmd[] = "\007RECREP\r";
-     int data_sz;
-    char *ptr;
+  unsigned int cpy;
+  const char get_report_cmd[] = "\007RECREP\r";
+  int data_sz;
+  char *ptr;
 
-   if (debug) COM[DEBUG_COM]->printf ("\n***get_report\n");
+    
+
+  if (debug) COM[DEBUG_COM]->printf ("\n***get_report\n");
+
+  if (bouchon) return 0; 
+
+    
+  COM[RATIERE_COM]->begin(4800,SERIAL_8N2);
+
+  // Purge reception buffer before anything 
+  while (COM[RATIERE_COM]->available()) COM[RATIERE_COM]->read();
+
+  // Write the magic command
+  if (COM[RATIERE_COM]->write(get_report_cmd, sizeof (get_report_cmd) - 1) != sizeof (get_report_cmd) - 1) {
+      if (debug) COM[DEBUG_COM]->println ("Write command fail");
+      return -1;
+  }
+  //if (debug) COM[DEBUG_COM]->println ("Write done");
+
+
+  if (wait_ack(200)==-1) {
+      if (debug) COM[DEBUG_COM]->println ("ACK1 not received");
+      return -1;
+  }
+  
+  // changement de vitesse
+  //if (debug) COM[DEBUG_COM]->println("Change BR to 115200");
+  COM[RATIERE_COM]->begin(115200,SERIAL_8N2);
+  delayMicroseconds(20000);
+
+  // purge du buffer
+  while (COM[RATIERE_COM]->available()) COM[RATIERE_COM]->read();
+
+  // envoi de ack 
+  if (COM[RATIERE_COM]->write(0x6) != 1) {
+      if (debug) COM[DEBUG_COM]->println ("write ack fail");
+      return -1;
+  }
+
+  // attend ack et block A 
+  if ((read_data(buf, 12, 200)!=12) || (buf[0] != 0x6) ||
+          (buf[1] != 'A') || (buf[2] != 9) || (buf[3] != 2) ) {
+      if (debug) COM[DEBUG_COM]->println ("ACK2 not received");
+      return -1;
+      }
+  
+    
+  data_sz = buf[4] | (buf[5] << 8) | (buf[6] << 16) | (buf[7] << 8);
+  *speed_ = buf[8] | (buf[9] << 8);
+  *temp = buf[10];
+  *nb_frames = buf[11];
+  
+  // if (debug) COM[DEBUG_COM]->printf ("data_sz = %u\n",data_sz);
+  
+  // envoi de ack 
+  if (COM[RATIERE_COM]->write (0x6) != 1) {
+      if (debug) COM[DEBUG_COM]->println ("write ack fail");
+      return -1;
+      }
+  
+  ptr = (char *)rep;
+  cpy = 0;
+  
+  while (data_sz > 0) {
+      unsigned int sz;
  
-
-    COM[RATIERE_COM]->begin(4800,SERIAL_8N2);
-    
-    if (COM[RATIERE_COM]->write(get_report_cmd, sizeof (get_report_cmd) - 1) != sizeof (get_report_cmd) - 1) {
-        if (debug) COM[DEBUG_COM]->println ("Write command fail");
-        return -1;
-    }
-    if (debug) COM[DEBUG_COM]->println ("Write done");
-
-    if (wait_ack(200)==-1) {
-        if (debug) COM[DEBUG_COM]->println ("ACK1 not received");
-        return -1;
-    }
-    
-    // changement de vitesse
-    if (debug) COM[DEBUG_COM]->println("Change BR to 115200");
-    COM[RATIERE_COM]->begin(115200,SERIAL_8N2);
-    delayMicroseconds(20000);
-
-    // purge du buffer
-    while (COM[RATIERE_COM]->available()) COM[RATIERE_COM]->read();
-
-    // envoi de ack 
-    if (COM[RATIERE_COM]->write(0x6) != 1) {
-        if (debug) COM[DEBUG_COM]->println ("write ack fail");
-        return -1;
-    }
-
-    // attend ack et block A 
-    if ((read_data(buf, 12, 200)!=12) || (buf[0] != 0x6) ||
-            (buf[1] != 'A') || (buf[2] != 9) || (buf[3] != 2) ) {
-        if (debug) COM[DEBUG_COM]->println ("ACK2 not received");
-        return -1;
-        }
-    
+      sz=read_data(buf,sizeof buf,55); 
+      if ( sz == -1 ) {
+          return -1;
+      }
       
-    data_sz = buf[4] | (buf[5] << 8) | (buf[6] << 16) | (buf[7] << 8);
-    *speed_ = buf[8] | (buf[9] << 8);
-    *temp = buf[10];
-    *nb_frames = buf[11];
-    
-    // if (debug) COM[DEBUG_COM]->printf ("data_sz = %u\n",data_sz);
-    
-    // envoi de ack 
-    if (COM[RATIERE_COM]->write (0x6) != 1) {
-        if (debug) COM[DEBUG_COM]->println ("write ack fail");
-        return -1;
-        }
-    
-    ptr = (char *)rep;
-    cpy = 0;
-    
-    while (data_sz > 0) {
-        unsigned int sz;
-   
-        sz=read_data(buf,sizeof buf,55); 
-        if ( sz == -1 ) {
-            return -1;
-        }
-        
-        if ((sz!=257)&&(sz!=143)) {
-          if (debug)COM[DEBUG_COM]->printf ("sz = %u\n",sz); // cas d'erreur il manque des données.  
-          return -1;    
-        }
-        
-        if (cpy + sz-2 <= sizeof (report_data_t)) {
-            memcpy (ptr, &buf[2], sz-2);
-            ptr += sz-2;
-            cpy += sz-2;
-        }
+      if ((sz!=257)&&(sz!=143)) {
+        if (debug)COM[DEBUG_COM]->printf ("sz = %u\n",sz); // Data is missing  
+        return -1;    
+      }
+      
+      if (cpy + sz-2 <= sizeof (report_data_t)) {
+          memcpy (ptr, &buf[2], sz-2);
+          ptr += sz-2;
+          cpy += sz-2;
+      }
 
-        // envoi de ack 
-        if (COM[RATIERE_COM]->write (0x6) != 1) {
-            if (debug) COM[DEBUG_COM]->println ("write ack fail");
-            //COM[1]->end();
-            return -1;
-        }
-        data_sz -= sz-2; // -2 for header
+      // envoi de ack 
+      if (COM[RATIERE_COM]->write (0x6) != 1) {
+          if (debug) COM[DEBUG_COM]->println ("write ack fail");
+          //COM[1]->end();
+          return -1;
+      }
+      data_sz -= sz-2; // -2 for header
     }
 
     delayMicroseconds(1000);
@@ -256,17 +294,13 @@ static int get_report (unsigned short *speed_,unsigned char *temp, unsigned char
   }
 
 
+
+
 /*
 *--------------------------------------------------------------------------=
 * send_report: send full report from a Ratiere to HTTP 
 *--------------------------------------------------------------------------=
 */
-
-unsigned long lastsent_statut=0;
-unsigned long lastsent_tempTable=0;
-unsigned long lastsent_speedTable=0;
-unsigned long lastsent_lameTable=0;
- 
  
 void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_frames, report_data_t *rep){
 
@@ -285,10 +319,11 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
     
     HTTPClient http;   
     unsigned long current_time = millis();
-    
-    if (((current_time-lastsent_statut)/1000) > statutPeriod || (lastsent_statut > current_time)) {    
 
-        
+  //  if (debug) COM[DEBUG_COM]->printf ("current_time : %lu\nlastsent_statut : %lu\n",current_time,lastsent_statut);
+    
+    if ((lastsent_statut==0)||(((current_time-lastsent_statut)/1000) > statutPeriod) || (lastsent_statut > current_time)) {    
+     
         DynamicJsonDocument  message(1024);
         message["ApparelId"] =  ratiere_id;
         message["MsgId"] =      MSGID_GENERAL;
@@ -322,7 +357,7 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
             
     }
     
-    if (((current_time-lastsent_speedTable)/1000) > speedTablePeriod || (lastsent_speedTable > current_time)) {    
+    if ((lastsent_speedTable == 0)||(((current_time-lastsent_speedTable)/1000) > speedTablePeriod) || (lastsent_speedTable > current_time)) {    
 
         DynamicJsonDocument  message2(1024);  
         message2["ApparelId"] =  ratiere_id;
@@ -354,7 +389,7 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
         http.end();
     }   
 
-    if (((current_time-lastsent_tempTable)/1000) > tempTablePeriod || (lastsent_tempTable > current_time)) {    
+    if ((lastsent_tempTable == 0) || (((current_time-lastsent_tempTable)/1000) > tempTablePeriod) || (lastsent_tempTable > current_time)) {    
 
         DynamicJsonDocument  message3(1024);  
         message3["ApparelId"] =  ratiere_id;
@@ -383,7 +418,7 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
         http.end();
     }
 
-    if (((current_time-lastsent_lameTable)/1000) > lameTablePeriod || (lastsent_lameTable > current_time)) {    
+    if ((lastsent_lameTable == 0)||(((current_time-lastsent_lameTable)/1000) > lameTablePeriod ) || (lastsent_lameTable > current_time)) {    
 
         DynamicJsonDocument  message4(1024);  
         message4["ApparelId"] =  ratiere_id;
@@ -420,50 +455,113 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
 }
 
 
+void sendAlertTemp(unsigned char temp) {   
+   
+  char url[200];
+  sprintf(url,"http://%s:%d%s",GATEWAY_SERVER,GATEWAY_PORT,PATH);
+
+  if (debug) COM[DEBUG_COM]->printf ("*** send Alert to url %s\n",url);
+
+  if (WiFi.status()!= WL_CONNECTED){
+    COM[DEBUG_COM]->printf("Error in WiFi connection\n");
+    return;
+  }
+
+  HTTPClient http;
+  http.begin(url);
+  
+  DynamicJsonDocument  message(1024);  
+  message["ApparelId"] =  ratiere_id;
+  message["MsgId"] =      MSGID_ALERTTEMP;
+  JsonObject payload = message.createNestedObject("Payload");
+  payload["AlertSource"] = "Temperature";
+  payload["AlertThreshold"] = thresholdTemp;      
+  payload["AlertValue"] = temp;      
+        
+  char putData[2048];
+  serializeJson(message,putData);
+      
+  if (debug) COM[DEBUG_COM]->printf ("Put Alert%s\n",putData);
+      
+  int httpResponseCode = http.PUT(putData);
+ 
+  if(httpResponseCode!=200){
+      COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+      COM[DEBUG_COM]->printf("%d",httpResponseCode);
+  }
+  http.end();  
+    
+  return;
+}
+
+
+void sendAlertSpeed(unsigned short speed)  {  
+  
+  char url[200];
+  sprintf(url,"http://%s:%d%s",GATEWAY_SERVER,GATEWAY_PORT,PATH);
+
+  if (debug) COM[DEBUG_COM]->printf ("*** send Alert to url %s\n",url);
+
+  if (WiFi.status()!= WL_CONNECTED){
+    COM[DEBUG_COM]->printf("Error in WiFi connection\n");
+    return;
+  }
+  
+  HTTPClient http;
+  http.begin(url);
+  
+  DynamicJsonDocument  message(1024);  
+  message["ApparelId"] =  ratiere_id;
+  message["MsgId"] =      MSGID_ALERTSPEED;
+  JsonObject payload = message.createNestedObject("Payload");
+  payload["AlertSource"] = "Speed";
+  payload["AlertThreshold"] = thresholdSpeed;      
+  payload["AlertValue"] = speed;      
+  
+  char putData[2048];
+  serializeJson(message,putData);
+      
+  if (debug) COM[DEBUG_COM]->printf ("Put Alert%s\n",putData);
+      
+  int httpResponseCode = http.PUT(putData);
+ 
+  if(httpResponseCode!=200){
+      COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+      COM[DEBUG_COM]->printf("%d",httpResponseCode);
+  }
+  http.end();  
+    
+  return;
+}
+
+
 void check_alert(unsigned short speed_,unsigned char temp){
 
   HTTPClient http;   
   char putData[2048];
-
-  boolean alert = true;
-   
-  if (alert) {    
-    char url[200];
-    sprintf(url,"http://%s:%d%s",GATEWAY_SERVER,GATEWAY_PORT,PATH);
-
-    if (debug) COM[DEBUG_COM]->printf ("*** send Alert to url %s\n",url);
-    
- 
-    if (WiFi.status()!= WL_CONNECTED){
-      COM[DEBUG_COM]->printf("Error in WiFi connection\n");
-      return;
-    } 
-
-    http.begin(url);
-    
-    DynamicJsonDocument  message(1024);  
-    message["ApparelId"] =  ratiere_id;
-    message["MsgId"] =      MSGID_ALERTTEMP;
-    JsonObject payload = message.createNestedObject("Payload");
-    payload["AlertSource"] = "Temperature";
-    payload["AlertThreshold"] = threshold;      
-    payload["AlertValue"] = temp;      
-          
-    serializeJson(message,putData);
-        
-    if (debug) COM[DEBUG_COM]->printf ("Put Alert%s\n",putData);
-        
-    int httpResponseCode = http.PUT(putData);
-   
-    if(httpResponseCode!=200){
-        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
-        COM[DEBUG_COM]->printf("%d",httpResponseCode);
+  
+  if ( temp >= thresholdTemp) {
+    if (!alertTempOnGoing) {
+        alertTempOnGoing = true;
+        sendAlertTemp(temp);
     }
-    http.end();  
-  }
-   
+  }  
+  else  alertTempOnGoing = false;
+
+  if ( speed_ >= thresholdSpeed) {
+    if (!alertSpeedOnGoing) {
+        alertSpeedOnGoing = true;
+        sendAlertSpeed(speed_);
+    }
+  }  
+  else  alertSpeedOnGoing = false;
+
   return;
-}
+    
+  }
+
+
+
 
 void get_config() { 
     
@@ -502,7 +600,7 @@ void get_config() {
 
 void setconfig(String json){
    
-  StaticJsonDocument<200> configDoc;
+  StaticJsonDocument<250> configDoc;
   DeserializationError err = deserializeJson(configDoc,json.c_str());
 
   if (err) {
@@ -517,7 +615,7 @@ void setconfig(String json){
     return;
   } else {
     ratiere_id = variant.as<String>();
-    if (debug) COM[DEBUG_COM]->printf("ratiere_id set to %s\n",ratiere_id.c_str());
+//    if (debug) COM[DEBUG_COM]->printf("ratiere_id set to %s\n",ratiere_id.c_str());
   }
 
   variant = configObject.getMember("PeriodeStatut");
@@ -525,7 +623,7 @@ void setconfig(String json){
     COM[DEBUG_COM]->printf("PeriodeStatut not found in config\n");
   } else {
     statutPeriod = variant.as<int>(); 
-    if (debug) COM[DEBUG_COM]->printf("statutPeriod set to :%d\n",statutPeriod);
+//    if (debug) COM[DEBUG_COM]->printf("statutPeriod set to :%d\n",statutPeriod);
   }
   
   variant = configObject.getMember("PeriodeTempTable");
@@ -533,7 +631,7 @@ void setconfig(String json){
     COM[DEBUG_COM]->printf("PeriodeTempTable not found in config\n");
   } else {
     tempTablePeriod = variant.as<int>(); 
-    if (debug) COM[DEBUG_COM]->printf("tempTablePeriod set to :%d\n",tempTablePeriod);
+//   if (debug) COM[DEBUG_COM]->printf("tempTablePeriod set to :%d\n",tempTablePeriod);
   }
 
   variant = configObject.getMember("PeriodeSpeedTable");
@@ -541,7 +639,7 @@ void setconfig(String json){
     COM[DEBUG_COM]->printf("PeriodeSpeedTable not found in config\n");
   } else {
     speedTablePeriod = variant.as<int>(); 
-    if (debug) COM[DEBUG_COM]->printf("speedTablePeriod set to :%d\n",speedTablePeriod);
+//    if (debug) COM[DEBUG_COM]->printf("speedTablePeriod set to :%d\n",speedTablePeriod);
   }
   
   variant = configObject.getMember("PeriodeLame");
@@ -549,18 +647,25 @@ void setconfig(String json){
     COM[DEBUG_COM]->printf("PeriodeSpeedTable not found in config\n");
   } else {
     lameTablePeriod = variant.as<int>(); 
-    if (debug) COM[DEBUG_COM]->printf("lamePeriod set to :%d\n",lameTablePeriod);
+//    if (debug) COM[DEBUG_COM]->printf("lamePeriod set to :%d\n",lameTablePeriod);
   }  
  
- variant = configObject.getMember("Threshold");
+ variant = configObject.getMember("ThresholdTemp");
   if (variant.isNull()) {
     COM[DEBUG_COM]->printf("Threshold not found in config\n");
   } else {
-    threshold = variant.as<int>(); 
-    if (debug) COM[DEBUG_COM]->printf("threshold set to :%d\n",lameTablePeriod);
+    thresholdTemp = variant.as<int>(); 
+//    if (debug) COM[DEBUG_COM]->printf("thresholdTemp set to :%d\n",thresholdTemp);
   }  
   
-  
+ variant = configObject.getMember("ThresholdSpeed");
+  if (variant.isNull()) {
+    COM[DEBUG_COM]->printf("Threshold not found in config\n");
+  } else {
+    thresholdSpeed = variant.as<int>(); 
+//    if (debug) COM[DEBUG_COM]->printf("thresholdSpeed set to :%d\n",thresholdSpeed);
+  }  
+    
   return;
 }
 
@@ -583,12 +688,11 @@ void loop()
   retry=0;
   do {
      ret = get_report(&speed_, &temp, &nb_frames, &report);
-     if (bouchon) ret = 0;
      retry++;
   } while ((ret!=0) && (retry<NB_RETRY)); 
  
   if (ret==0) {
-    check_alert(speed_,25);
+    check_alert(speed_,temp);
     send_report(speed_,temp,nb_frames,&report);
     }
     

@@ -6,7 +6,7 @@
 // user or environmental safety.
 
 #include "config.h"
-//#include <esp_wifi.h>
+#include <EEPROM.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 
@@ -25,7 +25,13 @@ unsigned long lastsent_statut;
 unsigned long lastsent_tempTable;
 unsigned long lastsent_speedTable;
 unsigned long lastsent_lameTable;
- 
+unsigned long lastsent_edgeStatus;
+
+unsigned short bootCpt;
+unsigned short wifiLostCpt;
+unsigned short reportFailCpt;
+
+  
 
 /* On going alert*/
 int thresholdTemp;
@@ -64,9 +70,13 @@ void setup() {
   COM[0]->begin(UART_BAUD0, SERIAL_PARAM0, SERIAL0_RXPIN, SERIAL0_TXPIN);
   COM[1]->begin(UART_BAUD1, SERIAL_PARAM1, SERIAL1_RXPIN, SERIAL1_TXPIN);
   COM[2]->begin(UART_BAUD2, SERIAL_PARAM2, SERIAL2_RXPIN, SERIAL2_TXPIN);
-  
-  if(debug) COM[DEBUG_COM]->println("\n\nRatiere WiFi serial bridge V2.00");
 
+  bootCpt=EEPROM.read(0) + 1; 
+  
+  if(debug) COM[DEBUG_COM]->printf("\n\nRatiere WiFi serial bridge %s\nboot number :%d\n", VERSION, bootCpt);
+  EEPROM.write(0,bootCpt);
+  EEPROM.commit();
+  
   #ifdef MODE_STA
     if(debug) COM[DEBUG_COM]->println("Open ESP Station mode");
     // STATION mode (ESP connects to router and gets an IP)
@@ -75,11 +85,17 @@ void setup() {
     WiFi.begin(ssid, pw);
     if(debug) COM[DEBUG_COM]->print("try to Connect to Wireless network: ");
     if(debug) COM[DEBUG_COM]->println(ssid);
-    while (WiFi.status() != WL_CONNECTED) {   
+
+    unsigned char retry = 50;  
+    while ((WiFi.status() != WL_CONNECTED) && (retry-- > 0)) {   
       delay(500);
       if(debug) COM[DEBUG_COM]->print(".");
     }
-    if(debug) COM[DEBUG_COM]->println("\nWiFi connected");  
+    if (retry != 0) 
+      if(debug) COM[DEBUG_COM]->println("\nWiFi connected");  
+    else
+      if(debug) COM[DEBUG_COM]->println("\nWiFi fail to connect");  
+        
   #endif // MODE_STA
     
   
@@ -91,6 +107,7 @@ void setup() {
   lastsent_tempTable=0;
   lastsent_speedTable=0;
   lastsent_lameTable=0;
+  lastsent_edgeStatus=0;
  
   alertSpeedOnGoing = false;
   alertTempOnGoing = false;
@@ -101,6 +118,9 @@ void setup() {
   lameTablePeriod = 300;
   thresholdTemp = 70;
   thresholdSpeed = 400;
+
+  wifiLostCpt=EEPROM.read(1);
+  reportFailCpt=EEPROM.read(2);
 
 }
 
@@ -439,7 +459,7 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
         
         serializeJson(message4,putData);
         
-        if (debug) COM[DEBUG_COM]->printf ("Put Lame%s\n",putData);
+        if (debug) COM[DEBUG_COM]->printf ("Put Lame\n");
         
         int httpResponseCode = http.PUT(putData);
         
@@ -453,6 +473,60 @@ void send_report(unsigned short speed_,unsigned char temp, unsigned char nb_fram
         http.end();  
     }
 }
+
+
+void sendEdgeStatus() {   
+   
+  HTTPClient http;   
+  unsigned long current_time = millis();
+   
+  if ((lastsent_edgeStatus==0)||(((current_time-lastsent_edgeStatus)/1000) > 600) || (lastsent_edgeStatus > current_time)) {    
+  
+    char url[200];
+    char buffer[10];
+    sprintf(url,"http://%s:%d%s",GATEWAY_SERVER,GATEWAY_PORT,PATH);
+  
+    if (debug) COM[DEBUG_COM]->printf ("*** send EdgeStatus to url %s\n",url);
+  
+    if (WiFi.status()!= WL_CONNECTED){
+      COM[DEBUG_COM]->printf("Error in WiFi connection\n");
+      return;
+    }
+  
+    HTTPClient http;
+    http.begin(url);
+    
+    DynamicJsonDocument  message(1024);  
+    message["ApparelId"] =  ratiere_id;
+    message["MsgId"] =      MSGID_EDGESTATUS;
+    JsonObject payload = message.createNestedObject("Payload");
+    payload["bootCount"] = itoa(EEPROM.read(0),buffer,10);
+    payload["wiFiLostCount"] = itoa(EEPROM.read(1),buffer,10);      
+    payload["reportFail"] = itoa(EEPROM.read(2),buffer,10);
+    payload["version"] = VERSION;
+                
+    char putData[2048];
+    serializeJson(message,putData);
+        
+    if (debug) COM[DEBUG_COM]->printf ("Put Edge Status\n");
+        
+    int httpResponseCode = http.PUT(putData);
+   
+    if(httpResponseCode!=200){
+        COM[DEBUG_COM]->printf("Error on PUT Request:\n%s\n",putData);
+        COM[DEBUG_COM]->printf("%d",httpResponseCode);
+    }
+    else {
+        lastsent_edgeStatus = current_time;  
+    }
+
+    http.end();  
+  }    
+  return;
+}
+
+
+
 
 
 void sendAlertTemp(unsigned char temp) {   
@@ -481,7 +555,7 @@ void sendAlertTemp(unsigned char temp) {
   char putData[2048];
   serializeJson(message,putData);
       
-  if (debug) COM[DEBUG_COM]->printf ("Put Alert%s\n",putData);
+  if (debug) COM[DEBUG_COM]->printf ("Put Temp Alert\n");
       
   int httpResponseCode = http.PUT(putData);
  
@@ -521,7 +595,7 @@ void sendAlertSpeed(unsigned short speed)  {
   char putData[2048];
   serializeJson(message,putData);
       
-  if (debug) COM[DEBUG_COM]->printf ("Put Alert%s\n",putData);
+  if (debug) COM[DEBUG_COM]->printf ("Put Speed Alert\n");
       
   int httpResponseCode = http.PUT(putData);
  
@@ -682,6 +756,37 @@ void loop()
    
   if (debug) COM[DEBUG_COM]->print("\n******** New loop ********\n");
 
+  if (WiFi.status()!= WL_CONNECTED){
+      wifiLostCpt++;
+      COM[DEBUG_COM]->printf("Wifi connection failed %d\n",wifiLostCpt);
+      #ifdef MODE_STA
+      
+      EEPROM.write(1,wifiLostCpt);
+      EEPROM.commit();
+      
+      if(debug) COM[DEBUG_COM]->println("Restart ESP Station mode");
+      // STATION mode (ESP connects to router and gets an IP)
+      // Assuming client is also connected to that router
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(ssid, pw);
+      if(debug) COM[DEBUG_COM]->print("try to Connect to Wireless network: ");
+      if(debug) COM[DEBUG_COM]->println(ssid);
+    
+      unsigned char retry = 25;  
+      while ((WiFi.status() != WL_CONNECTED) && (retry-- > 0)) {   
+        delay(500);
+        if(debug) COM[DEBUG_COM]->print(".");
+      }
+      if (retry != 0) 
+        if(debug) COM[DEBUG_COM]->println("\nWiFi connected");  
+      else {
+        if(debug) COM[DEBUG_COM]->println("\nWiFi fail to connect");  
+        return;          
+        }
+      #endif // MODE_STA
+  } 
+
+
   get_config();
 
   // get report from connected ratiere on COM1 //     
@@ -690,17 +795,24 @@ void loop()
      ret = get_report(&speed_, &temp, &nb_frames, &report);
      retry++;
   } while ((ret!=0) && (retry<NB_RETRY)); 
- 
+
+   // Send report to server //       
+
   if (ret==0) {
     check_alert(speed_,temp);
     send_report(speed_,temp,nb_frames,&report);
-    }
+  }
     
-  // Send report to server //       
   else {
     if (debug)COM[DEBUG_COM]->print ("get_report failed\n");
-    }
+    reportFailCpt++;
+    EEPROM.write(2,reportFailCpt);
+    EEPROM.commit();
+  }
 
+
+  sendEdgeStatus();
+  
   delay(3000); 
 
 }

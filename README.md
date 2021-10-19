@@ -27,6 +27,7 @@ Used Libraries: (must be installed in the arduino IDE):
 https://github.com/espressif/arduino-esp32
 HTTPCLient
 ArduinoJson
+EEPROM
 
 Arduino hardware configuration:
 

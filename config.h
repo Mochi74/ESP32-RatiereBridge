@@ -23,7 +23,7 @@
 bool debug = true;
 bool bouchon = false;
 
-#define VERSION "2.00"
+#define VERSION "2.10"
 
 
 const char *ssid = "Linksys12063";    // You will connect your phone to this Access Point
@@ -46,6 +46,7 @@ IPAddress netmask(255, 255, 255, 0);
 #define MSGID_LAMETABLE  "LameTable"
 #define MSGID_ALERTTEMP "TemperatureAlert" 
 #define MSGID_ALERTSPEED "SpeedAlert" 
+#define MSGID_EDGESTATUS "EdgeStatus"
 
 #define NB_RETRY 5
 #define BUFFER_SIZE 1024
